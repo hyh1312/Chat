@@ -34,6 +34,14 @@ class PetChatViewModel(application: Application) : AndroidViewModel(application)
     private var lastPictureInfo: PictureInfo? = null
         private set
 
+    // 添加加载状态
+    var isLoading by mutableStateOf(false)
+        private set
+
+    // 添加一个可观察的状态来触发滚动
+    private var _shouldScrollToBottom = mutableStateOf(false)
+    val shouldScrollToBottom: Boolean by _shouldScrollToBottom
+
     /**
      * 切换当前的宠物类型
      */
@@ -45,32 +53,52 @@ class PetChatViewModel(application: Application) : AndroidViewModel(application)
      * 发送新消息
      * 处理用户输入，获取AI响应，并更新UI状态
      */
-    fun sendMessage(content: String) {
+    fun sendMessage(message: String) {
+        if (message.isBlank()) return
+        
         viewModelScope.launch {
-            // 添加并保存用户消息
-            val userMessage = ChatMessage(content, true)
-            chatHistory = chatHistory + userMessage
-            repository.saveChatMessage(userMessage, currentPetType)
-
+            isLoading = true
             try {
-                // 获取AI响应和图片信息
-                val (response, pictureInfo) = repository.getPetResponseWithPictureInfo(currentPetType, content)
-                val petMessage = ChatMessage(response, false)
+                // 添加用户消息
+                val userMessage = ChatMessage(
+                    content = message,
+                    isFromUser = true,
+                    petType = currentPetType
+                )
+                chatHistory = chatHistory + userMessage
+                repository.saveChatMessage(userMessage, currentPetType)
+
+                // 获取AI响应
+                val (response, pictureInfo) = repository.getPetResponseWithPictureInfo(currentPetType, message)
+                val petMessage = ChatMessage(
+                    content = response,
+                    isFromUser = false,
+                    petType = currentPetType
+                )
                 chatHistory = chatHistory + petMessage
-                lastPictureInfo = pictureInfo
-                // 保存AI响应
                 repository.saveChatMessage(petMessage, currentPetType)
                 
-                // 处理累积的聊天记录
-                repository.processUnprocessedChats()
+                // 检查是否需要进行分析
+                if (repository.getUnprocessedChatsCount() >= 10) {
+                    repository.analyzeChats()
+                }
+                
+                // 触发滚动到底部
+                _shouldScrollToBottom.value = true
+                
             } catch (e: Exception) {
-                // 处理错误情况
-                val errorMessage = ChatMessage("抱歉，我现在有点累了...", false)
-                chatHistory = chatHistory + errorMessage
-                lastPictureInfo = null
-                repository.saveChatMessage(errorMessage, currentPetType)
+                e.printStackTrace()
+            } finally {
+                isLoading = false
             }
         }
+    }
+
+    /**
+     * 重置滚动状态
+     */
+    fun resetScroll() {
+        _shouldScrollToBottom.value = false
     }
 
     /**
@@ -81,5 +109,9 @@ class PetChatViewModel(application: Application) : AndroidViewModel(application)
         val info = lastPictureInfo
         lastPictureInfo = null
         return info
+    }
+
+    fun getChatHistory(petType: PetTypes): List<ChatMessage> {
+        return chatHistory.filter { it.petType == petType }
     }
 }
